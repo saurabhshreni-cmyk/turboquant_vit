@@ -291,8 +291,22 @@ def page_benchmark():
         st.info("Run a benchmark to populate this dashboard.")
         return
 
-    # ------------------------------------------------------------- KPI strip
+    # ------------------------------------------------------------- Sweet-spot callout
     base = df[df["method"].str.contains("Original", case=False, na=False)]
+    if not base.empty:
+        base_acc_val = float(base["top1_acc"].iloc[0])
+        sweet = df[df["method"].str.contains("TurboQuant-3bit", case=False, na=False)]
+        if not sweet.empty:
+            s = sweet.iloc[0]
+            delta = s["top1_acc"] - base_acc_val
+            st.success(
+                f"🔥 **Sweet spot — TurboQuant 3-bit**: "
+                f"{s['compression_ratio']:.2f}× compression, "
+                f"{s['memory_saved_pct']:.1f}% KV memory saved, "
+                f"top-1 {s['top1_acc']:.2f}% ({delta:+.2f}% vs FP32)."
+            )
+
+    # ------------------------------------------------------------- KPI strip
     best_compress = df.loc[df["compression_ratio"].idxmax()] if not df.empty else None
     if best_compress is not None and not base.empty:
         base_acc = float(base["top1_acc"].iloc[0])
@@ -334,8 +348,11 @@ def page_benchmark():
         st.caption("Compression ratio (×) and memory saved (%) annotated on each bar.")
         st.plotly_chart(viz.memory_savings_bar(df), use_container_width=True)
     with c2:
-        st.markdown("##### Inference latency")
-        st.caption("Two bars per method: cold-start mean and warm steady-state.")
+        st.markdown("##### Inference latency (cached compressors)")
+        st.caption("Two bars per method: cold-start mean (first batch incl. CUDA "
+                   "warmup) and warm steady-state. Compressors are pre-cached, so "
+                   "the cold-start spike is purely CUDA kernel JIT — not codebook "
+                   "fitting.")
         st.plotly_chart(viz.latency_bar(df), use_container_width=True)
 
     turbo = df[df["method"].str.contains("TurboQuant")]

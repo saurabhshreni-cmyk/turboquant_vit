@@ -35,3 +35,4 @@ Thumbs.db
 # Outputs
 *.csv
 *.log
+_bench_results.json
