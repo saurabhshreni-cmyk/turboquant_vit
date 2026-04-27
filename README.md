@@ -105,4 +105,4 @@ If you use this work, please cite the original TurboQuant paper:
 
 ## License
 
-MIT.
+Released under the [MIT License](LICENSE) — © 2026 Saurabh Shreni.
