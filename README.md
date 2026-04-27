@@ -95,14 +95,6 @@ If you use this work, please cite the original TurboQuant paper:
   year      = {2026}
 }
 ```
-
-## LinkedIn caption suggestion
-
-> Just shipped **TurboQuant × ViT**: applying ICLR 2026 KV-cache compression
-> from LLMs to **Vision Transformers** for the first time. ~9× smaller K/V
-> with near-lossless top-1 on CIFAR-10, no retraining. Streamlit app,
-> from-scratch QJL + PolarQuant, hook-based attention swap. Code → ⬇
-
 ## License
 
 Released under the [MIT License](LICENSE) — © 2026 Saurabh Shreni.
