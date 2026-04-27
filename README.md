@@ -1,10 +1,13 @@
 # TurboQuant × ViT — KV Cache Compression for Vision Transformers
 
+[![Live demo](https://img.shields.io/badge/Live%20demo-Streamlit%20Cloud-8b5cf6?logo=streamlit&logoColor=white)](https://turboquant-vit.streamlit.app/)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-orange)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.32%2B-red)
 ![ICLR 2026](https://img.shields.io/badge/ICLR-2026-purple)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green)
+
+**🔗 Live demo:** **<https://turboquant-vit.streamlit.app/>** *(CPU free tier — first cold-boot ~1 min)*
 
 > **First open-source application of *TurboQuant* (Google Research, ICLR 2026) to Vision Transformers.**
 > The original paper evaluates KV-cache compression on LLMs only. This repo
