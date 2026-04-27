@@ -263,11 +263,26 @@ def page_benchmark():
         "Every method is evaluated on the **same** CIFAR-10 slice with the same "
         "batch order — accuracy, memory and latency are directly comparable."
     )
+    # On Streamlit Cloud (CPU-only, 1 GB RAM) keep the defaults small enough
+    # to stay well under the per-request time budget. Local CUDA users can
+    # always crank the slider up.
+    cloud = not torch.cuda.is_available()
     c_n, c_b = st.columns([2, 1])
     with c_n:
-        n = st.slider("Number of CIFAR-10 test images", 64, 2000, 256, step=64)
+        n = st.slider(
+            "Number of CIFAR-10 test images",
+            min_value=16, max_value=256 if cloud else 2000,
+            value=32 if cloud else 256, step=16,
+            help="Larger N = more reliable accuracy estimates but longer runtime.",
+        )
     with c_b:
-        bs = st.slider("Batch size", 4, 32, 16, step=4)
+        bs = st.slider(
+            "Batch size", 4, 16 if cloud else 32, 8 if cloud else 16, step=4,
+            help="Lower this if you hit out-of-memory.",
+        )
+    if cloud:
+        st.caption("ℹ️ Running on CPU — sliders are capped for the free tier. "
+                   "Clone locally for full-scale benchmarking.")
 
     if st.button("▶ Run full benchmark", type="primary"):
         model, _, _ = load_model()
