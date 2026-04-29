@@ -4,11 +4,18 @@ from __future__ import annotations
 import io
 import time
 from contextlib import contextmanager
-from typing import Tuple
+from functools import lru_cache
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
+
+
+# Hard cap on uploaded image dimensions. Anything larger is downscaled before
+# the model transform runs so a malicious / accidental 8000×8000 PNG can't
+# blow up the Streamlit process.
+MAX_UPLOAD_PIXELS = 4096
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -61,6 +68,66 @@ def make_banner(width: int = 1280, height: int = 320) -> Image.Image:
 
 def safe_load_image(buf: bytes) -> Image.Image:
     return Image.open(io.BytesIO(buf)).convert("RGB")
+
+
+def safe_open_upload(file_like) -> Image.Image:
+    """Open a Streamlit `UploadedFile` (or any file-like) into a sanitized
+    RGB PIL image. Raises ValueError on corrupt input. Downscales oversized
+    images to MAX_UPLOAD_PIXELS on the longer edge before returning so the
+    rest of the pipeline never sees giant tensors.
+    """
+    try:
+        img = Image.open(file_like)
+        # Trigger a full read to surface decode errors here, not later.
+        img.load()
+        img = img.convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError(f"Could not decode image: {exc}") from exc
+
+    w, h = img.size
+    longest = max(w, h)
+    if longest > MAX_UPLOAD_PIXELS:
+        scale = MAX_UPLOAD_PIXELS / longest
+        new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+        img = img.resize(new_size, Image.BILINEAR)
+    return img
+
+
+@lru_cache(maxsize=1)
+def _imagenet_categories() -> Optional[List[str]]:
+    """Return the 1000 ImageNet-1k category names, or None if torchvision
+    metadata isn't reachable."""
+    try:
+        from torchvision.models import ViT_B_16_Weights
+        cats = ViT_B_16_Weights.IMAGENET1K_V1.meta.get("categories")
+        if cats and len(cats) >= 1000:
+            return list(cats)
+    except Exception:
+        pass
+    return None
+
+
+def imagenet_top1(logits: torch.Tensor,
+                  model: Optional[torch.nn.Module] = None) -> Tuple[str, float]:
+    """Resolve the top-1 ImageNet label + softmax confidence from a (1, 1000)
+    logits tensor. Prefers the model's own `id2label` (HuggingFace) and falls
+    back to torchvision metadata; returns ("class_<idx>", conf) on failure.
+    """
+    probs = torch.softmax(logits.detach().float(), dim=-1)[0]
+    conf, idx = torch.max(probs, dim=-1)
+    idx_int = int(idx.item())
+    label: Optional[str] = None
+    cfg = getattr(model, "config", None) if model is not None else None
+    id2label = getattr(cfg, "id2label", None) if cfg is not None else None
+    if isinstance(id2label, dict):
+        label = id2label.get(idx_int) or id2label.get(str(idx_int))
+    if label is None:
+        cats = _imagenet_categories()
+        if cats is not None and 0 <= idx_int < len(cats):
+            label = cats[idx_int]
+    if label is None:
+        label = f"class_{idx_int}"
+    return label, float(conf.item())
 
 
 def frobenius_distortion(a: torch.Tensor, b: torch.Tensor) -> float:

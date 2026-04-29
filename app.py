@@ -17,7 +17,8 @@ from data_loader import (cifar_status, get_sample_images, get_test_loader,
                          preprocess_pil, set_transform)
 from evaluator import CIFAR_ORDER, ViTEvaluator, imagenet_logits_to_cifar
 from model_loader import load_model_with_fallback
-from utils import format_mb, get_device, make_banner, model_device
+from utils import (format_mb, get_device, imagenet_top1, make_banner,
+                   model_device, safe_open_upload)
 import visualizer as viz
 
 
@@ -170,11 +171,14 @@ def _predict(model, pixel_values, method, bits, capture_attn=True):
         torch.cuda.synchronize()
     elapsed_ms = (time.perf_counter() - t0) * 1000
     cifar = imagenet_logits_to_cifar(logits)
-    pred = int(cifar.argmax(dim=-1).item())
-    conf = float(cifar.max(dim=-1).values.item())
+    cifar_pred = int(cifar.argmax(dim=-1).item())
+    cifar_conf = float(cifar.max(dim=-1).values.item())
+    in_label, in_conf = imagenet_top1(logits, model)
     return {
-        "logits": logits, "cifar_scores": cifar, "pred": pred,
-        "label": CIFAR_ORDER[pred], "conf": conf,
+        "logits": logits, "cifar_scores": cifar,
+        "pred": cifar_pred,
+        "label": CIFAR_ORDER[cifar_pred], "conf": cifar_conf,
+        "imagenet_label": in_label, "imagenet_conf": in_conf,
         "latency_ms": elapsed_ms,
         "memory_bytes": tracker.total_compressed_bytes(),
         "orig_memory_bytes": tracker.total_original_bytes(),
@@ -195,13 +199,21 @@ def page_try_live():
                               [f"#{i} — {name}" for i, (_, _, name) in enumerate(samples)])
         idx = int(choice.split("—")[0].strip().lstrip("#"))
         upload = st.file_uploader("…or upload an image", type=["png", "jpg", "jpeg"])
+        is_upload = False
         if upload is not None:
-            img = Image.open(upload).convert("RGB")
-            true_label = None
+            try:
+                img = safe_open_upload(upload)
+                is_upload = True
+                true_label = upload.name
+            except ValueError as exc:
+                st.error(f"Couldn't read that image: {exc}")
+                return
         else:
             img, label_idx, label_name = samples[idx]
             true_label = label_name
-        st.image(img, caption=f"Input ({true_label or 'uploaded'})", width=240)
+        caption = f"Uploaded: {true_label}" if is_upload else f"CIFAR-10: {true_label}"
+        st.image(img, caption=caption, width=240)
+        st.caption(f"Image size: {img.size[0]}×{img.size[1]} px (resized to 224×224 before inference)")
 
     with col2:
         method = st.selectbox("Compression method",
@@ -229,20 +241,44 @@ def page_try_live():
     for col, label, res in [(a, "Original (FP32)", res_orig), (b, f"{method} {bits}-bit", res_comp)]:
         with col:
             st.markdown(f"### {label}")
-            st.metric("Prediction", res["label"], f"{res['conf']*100:.1f}% conf")
+            # For genuine uploads, surface the model's actual ImageNet
+            # prediction — the CIFAR mapping is only meaningful for the
+            # 10 CIFAR classes and would be misleading for arbitrary photos.
+            if is_upload:
+                st.metric("ImageNet top-1", res["imagenet_label"],
+                          f"{res['imagenet_conf']*100:.1f}% conf")
+                with st.expander("CIFAR-10 mapping (best of 10)"):
+                    st.write(f"**{res['label']}** · {res['conf']*100:.1f}% conf")
+            else:
+                st.metric("Prediction", res["label"], f"{res['conf']*100:.1f}% conf")
             st.metric("Latency", f"{res['latency_ms']:.1f} ms")
             st.metric("KV memory", format_mb(res["memory_bytes"]))
             attn_layers = res["attention"]
             if attn_layers:
-                last = attn_layers[max(attn_layers.keys())][0, 0].cpu().numpy()
-                fig = viz.patch_attention_grid(img, last)
-                st.plotly_chart(fig, use_container_width=True)
+                try:
+                    last_key = max(attn_layers.keys())
+                    last = attn_layers[last_key][0, 0].cpu().numpy()
+                    fig = viz.patch_attention_grid(img, last)
+                    st.plotly_chart(fig, use_container_width=True)
+                except Exception as exc:  # noqa: BLE001 — chart is optional
+                    st.caption(f"(attention chart unavailable: {exc})")
 
     st.divider()
-    changed = res_orig["label"] != res_comp["label"]
+    # Compare on whichever label is meaningful: ImageNet for uploads, CIFAR for samples.
+    if is_upload:
+        changed = res_orig["imagenet_label"] != res_comp["imagenet_label"]
+        match_text = (f"Original: **{res_orig['imagenet_label']}** · "
+                      f"Compressed: **{res_comp['imagenet_label']}**")
+    else:
+        changed = res_orig["label"] != res_comp["label"]
+        match_text = (f"Original: **{res_orig['label']}** · "
+                      f"Compressed: **{res_comp['label']}**")
     cls = "changed-yes" if changed else "changed-no"
     msg = "❌ Prediction CHANGED after compression" if changed else "✅ Prediction PRESERVED after compression"
     st.markdown(f"<h4 class='{cls}'>{msg}</h4>", unsafe_allow_html=True)
+    st.caption(match_text)
+    if not changed:
+        st.success("Prediction preserved across compression.")
 
     saved = 1.0 - (res_comp["memory_bytes"] / max(res_comp["orig_memory_bytes"], 1))
     ratio = (res_comp["orig_memory_bytes"] / max(res_comp["memory_bytes"], 1))
@@ -396,7 +432,11 @@ def page_attention():
 
     upload = st.file_uploader("Upload image (or use sample)", type=["png", "jpg", "jpeg"])
     if upload is not None:
-        img = Image.open(upload).convert("RGB")
+        try:
+            img = safe_open_upload(upload)
+        except ValueError as exc:
+            st.error(f"Couldn't read that image: {exc}")
+            return
     else:
         img, _, _ = samples[0]
 
