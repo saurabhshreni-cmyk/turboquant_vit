@@ -9,7 +9,15 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
+
+# `UnidentifiedImageError` was added in Pillow 7.0; guard the import so we
+# can never crash on bizarre/older Pillow builds the Streamlit Cloud base
+# image might ship with. Fall back to OSError, which Pillow always raises.
+try:
+    from PIL import UnidentifiedImageError as _UnidentifiedImageError
+except ImportError:  # pragma: no cover — defensive fallback
+    _UnidentifiedImageError = OSError
 
 
 # Hard cap on uploaded image dimensions. Anything larger is downscaled before
@@ -81,7 +89,7 @@ def safe_open_upload(file_like) -> Image.Image:
         # Trigger a full read to surface decode errors here, not later.
         img.load()
         img = img.convert("RGB")
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
+    except (_UnidentifiedImageError, OSError, ValueError) as exc:
         raise ValueError(f"Could not decode image: {exc}") from exc
 
     w, h = img.size
